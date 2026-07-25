@@ -1,5 +1,5 @@
 // ===========================================================================
-// Cloudflare Worker - Voice Studio Backend
+// Cloudflare Worker - Voice Studio Backend & Admin Frontend
 // ===========================================================================
 
 export default {
@@ -18,22 +18,29 @@ export default {
     }
 
     try {
-      // 1. Telegram Auth Route
+      // 1. Frontend Page (HTML Interface)
+      if (url.pathname === '/' || url.pathname === '/index.html') {
+        return new Response(getAdminHtml(), {
+          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+        });
+      }
+
+      // 2. Telegram Auth Route
       if (url.pathname === '/api/auth/telegram' && request.method === 'POST') {
         return await handleTelegramAuth(request, env, corsHeaders);
       }
 
-      // 2. Admin Auth Route
+      // 3. Admin Auth Route
       if (url.pathname === '/api/auth/admin' && request.method === 'POST') {
         return await handleAdminAuth(request, env, corsHeaders);
       }
 
-      // 3. User Data Sync Route
+      // 4. User Data Sync Route
       if (url.pathname === '/api/user/sync' && request.method === 'POST') {
         return await handleUserSync(request, env, corsHeaders);
       }
 
-      // 4. RunPod Voice Generation Route
+      // 5. RunPod Voice Generation Route
       if (url.pathname === '/api/generate' && request.method === 'POST') {
         return await handleGenerate(request, env, corsHeaders);
       }
@@ -53,18 +60,17 @@ export default {
 };
 
 // ===========================================================================
-// Firebase Auth & Database REST Engine (Robust & WebCrypto Compatible)
+// Firebase Auth & REST Engine
 // ===========================================================================
 
 async function getGoogleAccessToken(env) {
   if (!env.FIREBASE_CLIENT_EMAIL || !env.FIREBASE_PRIVATE_KEY) {
-    throw new Error('Firebase Configuration Variables (EMAIL / PRIVATE_KEY) မရှိသေးပါ။');
+    throw new Error('Firebase Configuration Variables မပြည့်စုံပါ။');
   }
 
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: 'RS256', typ: 'JWT' };
   
-  // Scopes for Cloud Datastore & Firebase Access
   const claim = {
     iss: env.FIREBASE_CLIENT_EMAIL,
     scope: 'https://www.googleapis.com/auth/datastore https://www.googleapis.com/auth/cloud-platform',
@@ -75,10 +81,7 @@ async function getGoogleAccessToken(env) {
 
   const unsignedToken = `${base64url(JSON.stringify(header))}.${base64url(JSON.stringify(claim))}`;
 
-  // Clean Private Key Format
-  let pem = env.FIREBASE_PRIVATE_KEY;
-  pem = pem.replace(/\\n/g, '\n'); // Handle literal string '\n'
-  
+  let pem = env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n');
   const der = pemToDer(pem);
 
   const cryptoKey = await crypto.subtle.importKey(
@@ -144,24 +147,6 @@ function base64url(source) {
   return encoded.replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
 }
 
-// Firestore Document Helper Functions
-async function firestoreGet(env, collection, documentId) {
-  const token = await getGoogleAccessToken(env);
-  const projectId = env.FIREBASE_PROJECT_ID;
-  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/${collection}/${documentId}`;
-
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
-
-  if (res.status === 404) return null;
-  if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.error?.message || 'Firestore GET Failed');
-  }
-  return await res.json();
-}
-
 async function firestoreSet(env, collection, documentId, fields) {
   const token = await getGoogleAccessToken(env);
   const projectId = env.FIREBASE_PROJECT_ID;
@@ -187,7 +172,6 @@ async function firestoreSet(env, collection, documentId, fields) {
 // Request Handlers
 // ===========================================================================
 
-// Telegram Auth Handler
 async function handleTelegramAuth(request, env, corsHeaders) {
   const body = await request.json();
   const { initData } = body;
@@ -199,7 +183,6 @@ async function handleTelegramAuth(request, env, corsHeaders) {
     });
   }
 
-  // Validate Telegram Auth Signature
   const isValid = await verifyTelegramAuth(initData, env.TELEGRAM_BOT_TOKEN);
   if (!isValid) {
     return new Response(JSON.stringify({ error: 'Invalid Telegram authentication' }), {
@@ -216,7 +199,6 @@ async function handleTelegramAuth(request, env, corsHeaders) {
   });
 }
 
-// Admin Auth Handler
 async function handleAdminAuth(request, env, corsHeaders) {
   const body = await request.json();
   const { password } = body;
@@ -228,7 +210,7 @@ async function handleAdminAuth(request, env, corsHeaders) {
     });
   }
 
-  // Test Firebase Connection via Auth Token
+  // Verify Firebase Login Connection
   await getGoogleAccessToken(env);
 
   return new Response(JSON.stringify({ success: true, token: env.SESSION_SECRET }), {
@@ -236,7 +218,6 @@ async function handleAdminAuth(request, env, corsHeaders) {
   });
 }
 
-// User Sync Handler
 async function handleUserSync(request, env, corsHeaders) {
   const body = await request.json();
   const { userId, userData } = body;
@@ -262,7 +243,6 @@ async function handleUserSync(request, env, corsHeaders) {
   });
 }
 
-// RunPod Audio Generation Handler
 async function handleGenerate(request, env, corsHeaders) {
   const body = await request.json();
   const { prompt, voiceId } = body;
@@ -290,7 +270,6 @@ async function handleGenerate(request, env, corsHeaders) {
   });
 }
 
-// Telegram Signature Validation Helper
 async function verifyTelegramAuth(initData, botToken) {
   const urlParams = new URLSearchParams(initData);
   const hash = urlParams.get('hash');
@@ -320,5 +299,102 @@ async function verifyTelegramAuth(initData, botToken) {
     .join('');
 
   return hexSignature === hash;
-      }
+}
 
+// ===========================================================================
+// Admin UI HTML Template Generator
+// ===========================================================================
+
+function getAdminHtml() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Studio UI</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      background-color: #f7f6f0;
+      margin: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+    .card {
+      background: #ffffff;
+      padding: 40px;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+    }
+    h2 {
+      letter-spacing: 2px;
+      font-size: 18px;
+      margin-bottom: 24px;
+      text-transform: uppercase;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 12px;
+      margin-bottom: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      box-sizing: border-box;
+      font-size: 16px;
+      text-align: center;
+    }
+    button {
+      width: 100%;
+      background-color: #1a1a1a;
+      color: #ffffff;
+      border: none;
+      padding: 12px;
+      font-size: 14px;
+      letter-spacing: 1px;
+      cursor: pointer;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    button:hover { background-color: #333; }
+    .error { color: #d9534f; margin-top: 15px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Admin Login</h2>
+    <input type="password" id="password" placeholder="••••••••••••">
+    <button onclick="login()">Unlock</button>
+    <div id="error" class="error"></div>
+  </div>
+
+  <script>
+    async function login() {
+      const password = document.getElementById('password').value;
+      const errorDiv = document.getElementById('error');
+      errorDiv.innerText = '';
+
+      try {
+        const res = await fetch('/api/auth/admin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password })
+        });
+        const data = await res.json();
+
+        if (res.ok && data.success) {
+          alert('Login Successful!');
+        } else {
+          errorDiv.innerText = data.error || 'Login Failed';
+        }
+      } catch (err) {
+        errorDiv.innerText = 'Network error: ' + err.message;
+      }
+    }
+  </script>
+</body>
+</html>`;
+}
